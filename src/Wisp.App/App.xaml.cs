@@ -87,6 +87,7 @@ public partial class App : Application
         var settings = settingsService.Load();
         _controller = new AppController(settings, settingsService);
         StartSupplementaryReporting();
+        RecordSupplementarySignal("settings", "settings", settingsService.LoadOutcome, "load");
         _controller.ViewModel.InitializeCrashReport(_previousCrashReport, _crashReports.AcknowledgeThrough);
         if (_runExitMarker?.Previous is { } previous)
         {
@@ -132,6 +133,7 @@ public partial class App : Application
         _controller.SetClipHotkeyRegistrations(_clipToggleHotkey.Apply, _clipSaveHotkey.Apply);
         if (ApplicationUpdateLauncher.TryConsumeResult(out var updateResult))
         {
+            RecordSupplementarySignal("update", "update", updateResult.Outcome, "installed");
             _controller.ViewModel.UpdateApplicationUpdateStatus(
                 updateResult.Status,
                 updateResult.Action,
@@ -592,6 +594,7 @@ public partial class App : Application
                                            System.Security.SecurityException)
         {
             var error = ApplicationUpdateLauncher.DescribeStartFailure(exception);
+            RecordSupplementarySignal("update", "update", "failure", "install-handoff");
             _applicationUpdateHandoffActive = false;
             _controller.Runs.CancelMetadataClosePreparation();
             _controller.ViewModel.UpdateApplicationUpdateStatus(error, "Try again", canCheck: true);
@@ -613,12 +616,14 @@ public partial class App : Application
                 _controller.Runs.CancelMetadataClosePreparation();
                 const string waitError =
                     "The update helper could not complete its safety checks. Wisp stayed open and no files were installed.";
+                RecordSupplementarySignal("update", "update", "failure", "install-handoff");
                 _controller.ViewModel.UpdateApplicationUpdateStatus(waitError, "Try again", canCheck: true);
                 return (false, waitError);
             }
 
             if (handoffState != ApplicationUpdateHandoffState.Ready)
             {
+                RecordSupplementarySignal("update", "update", handoffState == ApplicationUpdateHandoffState.TimedOut ? "timeout" : "failure", "install-handoff");
                 handoff.StopIfRunning();
                 _applicationUpdateHandoffActive = false;
                 _controller.Runs.CancelMetadataClosePreparation();

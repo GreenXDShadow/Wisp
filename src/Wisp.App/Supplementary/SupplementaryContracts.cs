@@ -10,7 +10,8 @@ internal sealed record SupplementaryEvent(int SchemaVersion, Guid EventId, Guid 
     string Outcome, string Platform, double? DurationMs = null, double? Value = null, string? GameBuild = null,
     string? Stage = null, SupplementaryMeasurements? Measurements = null, string? RenderMode = null,
     SupplementaryRelatedRun? RelatedRun = null, SupplementarySessionSummary? SessionSummary = null,
-    long? SessionAgeMs = null, SupplementaryIncident? Incident = null, SupplementaryActivitySummary? ActivitySummary = null);
+    long? SessionAgeMs = null, SupplementaryIncident? Incident = null, SupplementaryActivitySummary? ActivitySummary = null,
+    SupplementaryEnvironment? Environment = null, string? ForegroundState = null);
 
 internal sealed record SupplementaryActivitySummary(long ObservedMovingMs, long ObservedStationaryMs, long ActivityUnknownMs,
     long UnobservedMs, long SessionAgeMs, long DistanceMillimeters, long PeakSpeedMillimetersPerSecond,
@@ -116,6 +117,8 @@ internal static partial class SupplementarySchema
         (value.Stage is null || Stages.Contains(value.Stage)) && (value.RenderMode is null or "cpu" or "gpu") &&
         (value.SessionSummary is null || value.Kind == "heartbeat" && value.SessionSummary.IsValid) &&
         (value.ActivitySummary is null || value.Kind == "heartbeat" && value.ActivitySummary.IsValid) &&
+        (value.Environment is null || value.Kind == "heartbeat" && value.Environment.IsValid(value.ObservedAt)) &&
+        (value.ForegroundState is null || value.Kind == "heartbeat" && value.ForegroundState is "game" or "wisp" or "other" or "unknown") &&
         (value.Incident is null || (value.Kind == "exception" || value.Outcome is "failure" or "unsupported" or "timeout" or "unknown") &&
             value.Outcome is not ("success" or "attempt") && SupplementaryIncidentSchema.Valid(value.Incident)) &&
         (value.SessionAgeMs is null || value.Kind == "resource" && value.SessionAgeMs is >= 0 and <= 1_000_000_000_000 &&
@@ -161,6 +164,8 @@ internal static partial class SupplementarySchema
     internal static bool Token(string? value, int maximum) => value is { Length: > 0 } && value.Length <= maximum &&
         value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
     internal static bool BuildIdentity(string? value) => Token(value, 64) && char.IsAsciiLetterOrDigit(value![0]);
+    internal static string CompiledBuildIdentity(Guid? moduleVersionId, string? legacyBuildId = null) =>
+        moduleVersionId is { } id && id != Guid.Empty ? id.ToString("N") : BuildIdentity(legacyBuildId) ? legacyBuildId! : "unknown";
     internal static bool NumericVersion(string? value, bool app)
     {
         if (value is not { Length: > 0 and <= 32 }) return false;

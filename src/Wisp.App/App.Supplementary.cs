@@ -30,6 +30,8 @@ public partial class App
     private string? _reportingGameBuild;
     private bool _supplementaryReadyReported;
     private long _reportedWorkingSetAge = -1, _reportedManagedHeapAge = -1, _reportedCpuAge = -1;
+    private readonly SupplementaryEnvironmentCollector _supplementaryEnvironment = new();
+    private bool _supplementaryGameDetected;
     internal event EventHandler? SupplementaryContentChanged;
 
     private void NotifySupplementaryContentChanged()
@@ -86,8 +88,7 @@ public partial class App
         SupplementaryActivityRecorder.Current.Start();
         _supplementaryVersion = ApplicationVersionInfo.MachineVersion;
         _supplementaryChannel = ApplicationVersionInfo.IsPrivateCandidate || ApplicationVersionInfo.DiagnosticBuildId is not null ? "private" : "stable";
-        _supplementaryBuild = SupplementarySchema.BuildIdentity(ApplicationVersionInfo.DiagnosticBuildId)
-            ? ApplicationVersionInfo.DiagnosticBuildId! : typeof(App).Assembly.ManifestModule.ModuleVersionId.ToString("N");
+        _supplementaryBuild = SupplementarySchema.CompiledBuildIdentity(typeof(App).Assembly.ManifestModule.ModuleVersionId);
         var runId = _runExitMarker?.RunId;
         // File reads, identity creation and network initialization never hold the startup dispatcher.
         _ = Task.Run(() =>
@@ -207,8 +208,14 @@ public partial class App
             : latest.ListenerRunning && latest.PacketAgeMs is >= 0 and <= 300 ? "fresh"
             : latest.NativeStatus is NativeAssistProviderStatus.Ready or NativeAssistProviderStatus.UnsupportedBuild or NativeAssistProviderStatus.AccessDenied ? "detected"
             : latest.ListenerRunning && latest.PacketAgeMs is not null ? "stale" : "idle";
+        var foreground = _supplementaryEnvironment.Foreground();
+        var environment = _controller?.SupplementarySettingsSnapshot is { } settings ? _supplementaryEnvironment.Snapshot(settings) : null;
+        if (environment is not null && foreground == "unknown") environment = environment with { Coverage = environment.Coverage with { Foreground = "unavailable" } };
+        if (environment is not null && !environment.IsValid(now)) environment = null;
         EnqueueSupplementary(client, "heartbeat", "app", connection, "ready", sessionSummary: SupplementarySessionRecorder.Current.Snapshot(),
-            activitySummary: SupplementaryActivityRecorder.Current.Snapshot());
+            activitySummary: SupplementaryActivityRecorder.Current.Snapshot(), environment: environment, foregroundState: foreground);
+        if (!_supplementaryGameDetected && freshSnapshot && latest!.NativeStatus is NativeAssistProviderStatus.Ready or NativeAssistProviderStatus.UnsupportedBuild or NativeAssistProviderStatus.AccessDenied)
+            _supplementaryGameDetected = EnqueueSupplementary(client, "startup", "app", "detected", "game-detection");
         if (_reportedConnectionState != connection)
         {
             // This is an observed state transition. It is not an invented connection attempt denominator.
@@ -371,7 +378,7 @@ public partial class App
                 value: report.Exceptions.FirstOrDefault() is { } error ? unchecked((uint)error.HResult) : null,
                 eventId: report.Id, observedAt: report.TimeUtc,
                 relatedRun: runId == _reportingSessionId ? null : new(runId, report.WispVersion,
-                    SupplementarySchema.BuildIdentity(report.PrivateBuildId) ? report.PrivateBuildId! : report.ModuleVersionId?.ToString("N") ?? "unknown",
+                    SupplementarySchema.CompiledBuildIdentity(report.ModuleVersionId, report.PrivateBuildId),
                     report.PrivateBuildId is not null ? "private" : "stable"),
                 platform: prior?.NativeGamePlatform switch { DiagnosticGamePlatform.Steam => "steam", DiagnosticGamePlatform.XboxStore => "store", _ => "unknown" },
                 gameBuild: prior?.NativeGameVersion, historical: true, incident: SupplementaryIncidentCapture.Crash(report)))
@@ -384,12 +391,12 @@ public partial class App
         Guid? eventId = null, DateTimeOffset? observedAt = null, SupplementaryRelatedRun? relatedRun = null,
         string? platform = null, string? gameBuild = null, bool historical = false,
         SupplementarySessionSummary? sessionSummary = null, long? sessionAgeMs = null, SupplementaryIncident? incident = null,
-        SupplementaryActivitySummary? activitySummary = null)
+        SupplementaryActivitySummary? activitySummary = null, SupplementaryEnvironment? environment = null, string? foregroundState = null)
     {
         return client.TryEnqueue(new(1, eventId ?? Guid.NewGuid(), _reportingSessionId, _reportingInstallationId,
             observedAt ?? DateTimeOffset.UtcNow, _supplementaryVersion, _supplementaryBuild,
             _supplementaryChannel, kind, feature, outcome, platform ?? _reportingPlatform, durationMs, value,
-            historical ? gameBuild : _reportingGameBuild, stage, measurements, mode, relatedRun, sessionSummary, sessionAgeMs, incident, activitySummary));
+            historical ? gameBuild : _reportingGameBuild, stage, measurements, mode, relatedRun, sessionSummary, sessionAgeMs, incident, activitySummary, environment, foregroundState));
     }
     private static long Delta(long current, long? previous) => current >= (previous ?? 0) ? current - (previous ?? 0) : current;
 }

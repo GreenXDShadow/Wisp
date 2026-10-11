@@ -465,7 +465,7 @@ builds, validation boundary, and update behavior.
 - Settings and tire profiles remain in the current user's local application data.
 - Wisp 2.6.6 automatically reports bounded app health and usage measurements, including
   timing distributions, categorized failures and Wisp process resource usage. A random
-  installation identifier links sessions. There is no in-app opt-out. Client and support
+  installation identifier links sessions. Client and support
   details expire after 30 days; download history is retained separately. Driving packets,
   runs, tunes, clips, personal paths and raw diagnostic logs are not uploaded automatically.
   Failure reports use fixed error codes, selected Wisp method names, and at most three preceding

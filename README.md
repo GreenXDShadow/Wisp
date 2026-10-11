@@ -15,7 +15,7 @@
 
 ## Wisp 2.6.6
 
-2.6.6 adds Wisp Tools feedback in Extras, verified developer notices and automatic health reporting. Reporting uses random installation and session identifiers, has no in-app opt-out and retains detailed event and support content for 30 days. See [privacy and compatibility](#privacy-and-compatibility).
+2.6.6 adds Wisp Tools feedback in Extras, verified developer notices and automatic health reporting. Reporting uses random installation and session identifiers. See [privacy and compatibility](#privacy-and-compatibility).
 
 [Clips](#clips) · [Tune](#tune) · [Lap review](#lap-review) · [Live map and lap delta](#live-map-and-lap-delta) · [Install](#install) · [2.6.6 release notes](docs/releases/Wisp-2.6.6-release-notes.md)
 

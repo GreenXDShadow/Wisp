@@ -74,7 +74,7 @@ public partial class App
         { RecentDiagnostics = includeDiagnostics && PlayerMessagingEnabled ? _recentDiagnostics.Snapshot(preview.ObservedAt) : null });
     }
 
-    internal async Task<SupplementarySupportResult> SubmitSupplementarySupportAsync(SupplementarySupportReport reviewed, CancellationToken cancellation = default)
+    internal async Task<SupplementarySupportResult> SubmitSupplementarySupportAsync(SupplementarySupportReport reviewed, CancellationToken cancellation = default, bool chat = false)
     {
         SupplementaryClient client;
         CancellationToken featurePermission;
@@ -89,6 +89,8 @@ public partial class App
             featurePermission = _controller?.SupportFeatureToken ?? CancellationToken.None;
         }
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation, featurePermission);
+        if (chat) return PlayerMessagingEnabled && _supportInbox is not null
+            ? await _supportInbox.SubmitChatAsync(reviewed, lifetime.Token) : new(SupplementaryRequestStatus.Disabled);
         return await SubmitPrivateSupportAsync(reviewed, lifetime.Token);
     }
 
@@ -211,6 +213,13 @@ public partial class App
             Stopwatch.GetElapsedTime(_supplementaryStartedAt).TotalMilliseconds);
     }
 
+    private async Task FlushSupplementaryForUpdateAsync()
+    {
+        SupplementaryClient? client;
+        lock (_supplementaryGate) client = _supplementaryClient;
+        if (client is not null) await client.FlushForUpdateAsync();
+    }
+
     private void StopSupplementaryReporting()
     {
         StopSupportInbox();
@@ -228,7 +237,7 @@ public partial class App
             _supplementaryClient?.Dispose();
             _supplementaryClient = null;
         }
-        // No exit flush: a missing final heartbeat is not classified as a crash or an exact session ending.
+        // Update handoff has its own bounded flush. Other shutdown paths never wait for reporting.
     }
 
     private void CollectSupplementaryObservations(SupplementaryClient client)

@@ -3,10 +3,10 @@
 <p align="center">
   <strong>A customizable HUD, gameplay clips, tune viewing and lap analysis for Forza Horizon 6.</strong><br>
   Supports Steam and Xbox app / Microsoft Store editions on Windows PC.<br>
-  <br><strong>Versions before 2.4 can show delayed or choppy tachometer motion on NVIDIA systems when G-SYNC/VRR is enabled. I recommend updating to the latest release.</strong>
+<br><strong>This is the only official GitHub repository for Wisp. Downloads from unofficial sources may contain malware. I am not responsible for any loss or damage caused by unofficial downloads. <br></strong>
   
   <a href="https://github.com/Views2k/Wisp/releases/latest"><strong>Download the latest Wisp release</strong></a> ·
-  <a href="https://wispoverlay.com/">Website</a> ·
+  <a href="https://wispoverlay.com/">Official Website</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="docs/HOW-WISP-WAS-BUILT.md">Architecture</a><br><br>
   Support Wisp: <a href="https://ko-fi.com/views2k">Ko-fi</a> ·

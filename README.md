@@ -15,7 +15,7 @@
 
 ## Wisp 2.6.11
 
-Wisp 2.6.11 brings conversations with Views into a compact chat popup, with message history, replies and optional diagnostic attachments. Available updates stay visible on the dashboard with a working Update action.
+Wisp 2.6.11 brings conversation with the developer into a compact chat popup, with message history, replies and optional diagnostic attachments. Available updates stay visible on the dashboard with a working Update action.
 
 [Clips](#clips) · [Tune](#tune) · [Lap review](#lap-review) · [Live map and lap delta](#live-map-and-lap-delta) · [Install](#install) · [2.6.11 release notes](docs/releases/Wisp-2.6.11-release-notes.md)
 

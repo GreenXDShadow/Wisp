@@ -266,11 +266,50 @@ static_assert(sizeof(WispWaitMetrics) == 48 && sizeof(WispWaitMetricsV2) == 72 &
 
 static bool IsUnattempted(const WispGpuPriorityStatus& status)
 {
-    return status.attempted == 0 && status.requestedProcessClass == D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH &&
+    return status.attempted == 0 && status.requestedProcessClass == D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL &&
         status.processSetStatus == INT32_MIN && status.processReadStatus == INT32_MIN &&
-        status.effectiveProcessClass == -1 && status.requestedDevicePriority == 1 &&
+        status.effectiveProcessClass == -1 && status.requestedDevicePriority == 0 &&
         status.deviceSetHResult == S_FALSE && status.deviceReadHResult == S_FALSE &&
         status.effectiveDevicePriority == INT32_MIN;
+}
+
+// The opt-in raises HIGH / +1 and restores NORMAL / 0; WARP ignores both requests.
+static void CheckGpuPriorityToggle(void* renderer, bool cpuRendering,
+    NTSTATUS beforeProcessRead, D3DKMT_SCHEDULINGPRIORITYCLASS beforeProcessClass)
+{
+    Require(WispRendererSetGpuPriority(nullptr, 1) == E_POINTER, "GPU priority toggle rejects a missing renderer");
+    const HRESULT raised = WispRendererSetGpuPriority(renderer, 1);
+    WispGpuPriorityStatus status{};
+    Require(WispRendererGetGpuPriorityStatus(renderer, &status) == S_OK, "GPU priority status is readable after a raise");
+    auto currentClass = D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL;
+    NTSTATUS currentRead = D3DKMTGetProcessSchedulingPriorityClass(GetCurrentProcess(), &currentClass);
+    if (cpuRendering)
+    {
+        Require(raised == S_FALSE && IsUnattempted(status), "WARP ignores GPU priority requests");
+        if (beforeProcessRead >= 0 && currentRead >= 0)
+            Require(currentClass == beforeProcessClass, "WARP leaves the process GPU priority unchanged after a request");
+        return;
+    }
+    Require(raised == S_OK && status.requestedProcessClass == D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH &&
+        status.requestedDevicePriority == 1 && status.processSetStatus != INT32_MIN && status.deviceSetHResult != S_FALSE,
+        "a raise requests HIGH and relative plus one and records both set results");
+    if (status.processSetStatus >= 0 && currentRead >= 0)
+        Require(currentClass == D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH &&
+            status.effectiveProcessClass == static_cast<int32_t>(currentClass),
+            "a successful raise is visible to an independent OS readback");
+    if (status.deviceSetHResult == S_OK && status.deviceReadHResult == S_OK)
+        Require(status.effectiveDevicePriority == 1, "a successful device raise reads back as plus one");
+    const HRESULT restored = WispRendererSetGpuPriority(renderer, 0);
+    Require(restored == S_OK && WispRendererGetGpuPriorityStatus(renderer, &status) == S_OK &&
+        status.requestedProcessClass == D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL && status.requestedDevicePriority == 0,
+        "a restore requests the defaults");
+    currentRead = D3DKMTGetProcessSchedulingPriorityClass(GetCurrentProcess(), &currentClass);
+    if (status.processSetStatus >= 0 && currentRead >= 0)
+        Require(currentClass == D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL, "a successful restore returns the process to NORMAL");
+    if (status.deviceSetHResult == S_OK && status.deviceReadHResult == S_OK)
+        Require(status.effectiveDevicePriority == 0, "a successful device restore reads back as zero");
+    std::printf("gpuPriorityToggleRaise=0x%08lX;restoreProcessSet=0x%08lX\n",
+        static_cast<unsigned long>(raised), static_cast<unsigned long>(status.processSetStatus));
 }
 
 static void CheckGpuPriority(void* renderer, bool cpuRendering,
@@ -279,21 +318,22 @@ static void CheckGpuPriority(void* renderer, bool cpuRendering,
     WispGpuPriorityStatus status{};
     Require(WispRendererGetGpuPriorityStatus(renderer, &status) == S_OK,
         "GPU priority initialization snapshot is available on owner thread");
-    Require(status.requestedProcessClass == D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH &&
-        status.requestedDevicePriority == 1, "GPU priority requests HIGH and relative plus one only");
+    Require(status.requestedProcessClass == D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL &&
+        status.requestedDevicePriority == 0, "GPU priority never requests more than the defaults");
+    Require(status.processSetStatus == INT32_MIN && status.deviceSetHResult == S_FALSE,
+        "GPU priority setters are never called");
     auto currentClass = D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL;
     const NTSTATUS currentRead = D3DKMTGetProcessSchedulingPriorityClass(GetCurrentProcess(), &currentClass);
+    if (beforeProcessRead >= 0 && currentRead >= 0)
+        Require(currentClass == beforeProcessClass, "renderer creation leaves the process GPU priority unchanged");
     if (cpuRendering)
     {
-        Require(IsUnattempted(status), "WARP skips priority setters and readbacks without reporting success");
-        if (beforeProcessRead >= 0 && currentRead >= 0)
-            Require(currentClass == beforeProcessClass, "WARP leaves existing process GPU priority unchanged");
+        Require(IsUnattempted(status), "WARP skips priority readbacks without reporting success");
     }
     else
     {
-        Require(status.attempted == 1 && status.processSetStatus != INT32_MIN &&
-            status.processReadStatus != INT32_MIN && status.deviceSetHResult != S_FALSE &&
-            status.deviceReadHResult != S_FALSE, "hardware initialization records all four priority call results");
+        Require(status.attempted == 1 && status.processReadStatus != INT32_MIN &&
+            status.deviceReadHResult != S_FALSE, "hardware initialization records both priority readbacks");
         if (status.processReadStatus >= 0)
         {
             Require(status.effectiveProcessClass >= D3DKMT_SCHEDULINGPRIORITYCLASS_IDLE &&
@@ -302,19 +342,11 @@ static void CheckGpuPriority(void* renderer, bool cpuRendering,
             if (currentRead >= 0)
                 Require(status.effectiveProcessClass == static_cast<int32_t>(currentClass),
                     "stored process priority agrees with independent OS readback");
-            if (status.processSetStatus == 0)
-                Require(status.effectiveProcessClass == status.requestedProcessClass,
-                    "successful process priority set and readback agree");
         }
         else Require(status.effectiveProcessClass == -1, "failed process readback retains unknown class");
         if (status.deviceReadHResult == S_OK)
-        {
             Require(status.effectiveDevicePriority >= -7 && status.effectiveDevicePriority <= 7,
                 "successful device priority readback is a relative priority");
-            if (status.deviceSetHResult == S_OK)
-                Require(status.effectiveDevicePriority == status.requestedDevicePriority,
-                    "successful device priority set and readback agree");
-        }
         else Require(status.effectiveDevicePriority == INT32_MIN, "failed device readback retains unknown priority");
     }
     std::printf("gpuPriorityAttempted=%u;processSet=0x%08lX;processRead=0x%08lX;processEffective=%d;deviceSet=0x%08lX;deviceRead=0x%08lX;deviceEffective=%d\n",
@@ -1357,6 +1389,7 @@ int main(int argc, char** argv)
     Require(wrongPresentationThread == RPC_E_WRONG_THREAD,
         "presentation status respects render-thread ownership");
     CheckGpuPriority(renderer, cpuRendering, beforeProcessRead, beforeProcessClass);
+    CheckGpuPriorityToggle(renderer, cpuRendering, beforeProcessRead, beforeProcessClass);
     uint32_t initialReady = 99;
     WispWaitMetrics waitMetrics{};
     Require(SUCCEEDED(WispRendererWaitForFrameMeasured(renderer, 100, nullptr, 1, &initialReady, &waitMetrics)),

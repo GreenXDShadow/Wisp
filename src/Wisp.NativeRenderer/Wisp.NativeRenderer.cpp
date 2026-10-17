@@ -36,10 +36,13 @@ namespace
     constexpr UINT MaximumFrameLatency = 2;
     constexpr uint64_t MaximumDialCacheBytes = 16ull * 1024 * 1024;
 
+    // Wisp never raises its GPU scheduling priority: the game keeps the GPU, and
+    // the overlay accepts whatever time is left. The requested values are the
+    // untouched defaults; only the readbacks are attempted on hardware.
     constexpr WispGpuPriorityStatus UnattemptedGpuPriorityStatus() noexcept
     {
-        return {0, D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH, INT32_MIN, INT32_MIN, -1,
-            1, S_FALSE, S_FALSE, INT32_MIN};
+        return {0, D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL, INT32_MIN, INT32_MIN, -1,
+            0, S_FALSE, S_FALSE, INT32_MIN};
     }
 
     bool ValidSize(uint32_t width, uint32_t height) noexcept
@@ -667,23 +670,47 @@ namespace
             pacingStatus = S_OK;
         }
 
-        void ConfigureGpuPriority(IDXGIDevice* dxgiDevice) noexcept
+        void ObserveGpuPriority(IDXGIDevice* dxgiDevice) noexcept
         {
             gpuPriorityStatus.attempted = 1;
-            // Best-effort test: neither failure prevents rendering, and no
-            // elevation, absolute priority or realtime class is requested.
-            gpuPriorityStatus.processSetStatus = D3DKMTSetProcessSchedulingPriorityClass(
-                GetCurrentProcess(), D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH);
+            // Read-only: a raised process class or device priority would let the
+            // overlay's presents preempt the game's GPU work on every frame. The
+            // setters are never called; the readbacks only feed diagnostics.
             auto processClass = D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL;
             gpuPriorityStatus.processReadStatus = D3DKMTGetProcessSchedulingPriorityClass(
                 GetCurrentProcess(), &processClass);
             if (gpuPriorityStatus.processReadStatus >= 0)
                 gpuPriorityStatus.effectiveProcessClass = static_cast<int32_t>(processClass);
-            gpuPriorityStatus.deviceSetHResult = dxgiDevice->SetGPUThreadPriority(1);
             INT devicePriority = INT32_MIN;
             gpuPriorityStatus.deviceReadHResult = dxgiDevice->GetGPUThreadPriority(&devicePriority);
             if (gpuPriorityStatus.deviceReadHResult == S_OK)
                 gpuPriorityStatus.effectiveDevicePriority = devicePriority;
+        }
+
+        // Opt-in from the user's settings. The process class is process-wide, so
+        // every hardware renderer applies the same request; the device priority is
+        // per device. Each call records its results and the independent readbacks.
+        HRESULT SetGpuPriority(bool raise) noexcept
+        {
+            if (gpuPriorityStatus.attempted == 0 || !device) return S_FALSE;
+            ComPtr<IDXGIDevice> dxgiDevice;
+            CHECK_HR(device.As(&dxgiDevice));
+            gpuPriorityStatus.requestedProcessClass = raise
+                ? D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH : D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL;
+            gpuPriorityStatus.requestedDevicePriority = raise ? 1 : 0;
+            gpuPriorityStatus.processSetStatus = D3DKMTSetProcessSchedulingPriorityClass(GetCurrentProcess(),
+                static_cast<D3DKMT_SCHEDULINGPRIORITYCLASS>(gpuPriorityStatus.requestedProcessClass));
+            auto processClass = D3DKMT_SCHEDULINGPRIORITYCLASS_NORMAL;
+            gpuPriorityStatus.processReadStatus = D3DKMTGetProcessSchedulingPriorityClass(
+                GetCurrentProcess(), &processClass);
+            gpuPriorityStatus.effectiveProcessClass = gpuPriorityStatus.processReadStatus >= 0
+                ? static_cast<int32_t>(processClass) : -1;
+            gpuPriorityStatus.deviceSetHResult = dxgiDevice->SetGPUThreadPriority(gpuPriorityStatus.requestedDevicePriority);
+            INT devicePriority = INT32_MIN;
+            gpuPriorityStatus.deviceReadHResult = dxgiDevice->GetGPUThreadPriority(&devicePriority);
+            gpuPriorityStatus.effectiveDevicePriority = gpuPriorityStatus.deviceReadHResult == S_OK
+                ? devicePriority : INT32_MIN;
+            return S_OK;
         }
 
         HRESULT CreateTarget()
@@ -850,7 +877,7 @@ namespace
             context->ClearRenderTargetView(renderTarget.Get(), clear);
             CHECK_HR(InitialPresentationResult(PresentChain(swapChain.Get(), swapChainFlags, 0)));
             CHECK_HR(composition->Commit());
-            if (!cpuRendering) ConfigureGpuPriority(dxgiDevice.Get());
+            if (!cpuRendering) ObserveGpuPriority(dxgiDevice.Get());
             return S_OK;
         }
 
@@ -1361,6 +1388,13 @@ HRESULT __cdecl WispRendererGetGpuPriorityStatus(void* renderer, WispGpuPriority
         CHECK_HR(r.CheckThread());
         *status = r.gpuPriorityStatus;
         return S_OK;
+    });
+}
+HRESULT __cdecl WispRendererSetGpuPriority(void* renderer, int raise) noexcept
+{
+    return Invoke(renderer, [&](Renderer& r) {
+        CHECK_HR(r.CheckThread());
+        return r.SetGpuPriority(raise != 0);
     });
 }
 HRESULT __cdecl WispRendererGetPresentationStatus(void* renderer, WispPresentationStatus* status) noexcept

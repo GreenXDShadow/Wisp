@@ -18,6 +18,8 @@ public sealed partial class AppController
     internal Task ApplyFeatureControlsAsync(FeatureControlState state)
     {
         if (_disposed || !FeatureControls.Apply(state)) return Task.CompletedTask;
+        // Tools sees that this installation applied the revision, so a pause can be verified end to end.
+        SupplementaryObservations.Record("feature", "app", state.Disabled.Count > 0 ? "detected" : "none", "apply");
         var recording = FeatureAllowed("run-recording");
         var clipping = FeatureAllowed("clip-recording");
         _tuneCapture?.SetFeatureAvailable(FeatureAllowed("tune-read"));
@@ -72,6 +74,7 @@ public sealed partial class AppController
             _ = ConfigureClipShortcut(false, settings.ToggleShortcutEnabled, settings.ToggleShortcut);
             _ = ConfigureClipShortcut(true, settings.SaveShortcutEnabled, settings.SaveShortcut);
         }
+        ApplyHudGpuPriority();
         FeatureControlsChanged?.Invoke(this, EventArgs.Empty);
         UpdateShiftCueObservation();
         Overlay?.RefreshFeatureControls();

@@ -79,6 +79,9 @@ public partial class App : Application
         }
 
         _runExitMarker = RunExitMarkerStore.BeginCurrent(_runId);
+        // The native handler records the faulting address and call stack of a hardware fault
+        // for this run; the next run reports it with the crash.
+        NativeCrashCapture.TryInstall(_crashReports.StoreDirectory, _runId);
         _activationEvent = new EventWaitHandle(
             initialState: false,
             EventResetMode.AutoReset,

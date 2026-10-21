@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 
 namespace Wisp.App;
@@ -18,7 +19,7 @@ internal static class OverlayPassiveUpdate
     internal static OverlayPassiveUpdateState Apply(IntPtr handle, bool native)
     {
         var started = Stopwatch.GetTimestamp();
-        var enabled = 1;
+        var enabled = CompositionExperiment.PassiveUpdatesRequested ? 1 : 0;
         int result;
         try
         {
@@ -31,7 +32,7 @@ internal static class OverlayPassiveUpdate
             result = error.HResult;
         }
         var state = new OverlayPassiveUpdateState(handle.ToInt64(),
-            native ? "native_composition" : "wpf_overlay", true, started, Stopwatch.GetTimestamp(), result);
+            native ? "native_composition" : "wpf_overlay", enabled == 1, started, Stopwatch.GetTimestamp(), result);
         // Initialization/message handling only; never called by a frame loop.
         // Keep failures too, so an unsupported request cannot look like success.
         if (handle != IntPtr.Zero)
@@ -45,6 +46,15 @@ internal static class OverlayPassiveUpdate
     }
 
     internal static void Forget(IntPtr handle) => Windows.TryRemove(handle, out _);
+
+    // Diagnostic A/B only: request the current experiment value again on every tracked window.
+    internal static string ReapplyAll()
+    {
+        var results = new List<string>();
+        foreach (var (handle, previous) in Windows.ToArray())
+            results.Add(Apply(handle, previous.WindowKind == "native_composition").SetHResult.ToString(CultureInfo.InvariantCulture));
+        return string.Join(",", results);
+    }
 
     internal static OverlayPassiveUpdateState[] Snapshot() =>
         Windows.Values.OrderBy(value => value.WindowHandle).ToArray();

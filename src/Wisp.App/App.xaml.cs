@@ -66,6 +66,7 @@ public partial class App : Application
         base.OnStartup(e);
         FocusCues.Install();
         CursorRecovery.Install();
+        CompositionExperiment.Start();
 
         _instanceMutex = new Mutex(initiallyOwned: false, InstanceMutexName, out var isFirstInstance);
         if (!isFirstInstance)

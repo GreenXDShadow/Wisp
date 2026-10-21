@@ -56,7 +56,8 @@ internal sealed class WindowsStopEventReader : IWindowsStopEventSource
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception error) when (error is OperationCanceledException or UnauthorizedAccessException or EventLogException or
-            IOException or InvalidOperationException or System.Security.SecurityException) { }
+            IOException or InvalidOperationException or System.Security.SecurityException)
+        { }
         // Events are read oldest first, so a lookup cut short can miss the unclean-stop record but never invent one.
         cancellationToken.ThrowIfCancellationRequested();
         return Correlate(events, lastSeenUtc, nextRunStartedAtUtc);

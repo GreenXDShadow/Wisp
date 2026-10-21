@@ -20,6 +20,8 @@ internal sealed record RecoveredExitInfo(DateTimeOffset RunStartedAtUtc, DateTim
 {
     // The in-process capture of the fault, when the native handler wrote one for that run.
     public NativeFaultRecord? Native { get; init; }
+    // Windows stopped without shutting down (power loss, reset or system crash) right after the run was last seen.
+    public bool WindowsStopped { get; init; }
 
     internal RecoveredExitInfo? Sanitize()
     {
@@ -32,7 +34,8 @@ internal sealed record RecoveredExitInfo(DateTimeOffset RunStartedAtUtc, DateTim
             return this with
             {
                 Fault = fault with { Module = WindowsFaultEventReader.SafeModule(fault.Module), ModuleVersion = WindowsFaultEventReader.SafeVersion(fault.ModuleVersion) },
-                Native = Native?.Sanitize()
+                Native = Native?.Sanitize(),
+                WindowsStopped = false
             };
         }
         return this with { Fault = null, Native = Native?.Sanitize() };

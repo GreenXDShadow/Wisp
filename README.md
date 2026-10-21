@@ -13,11 +13,11 @@
   <a href="https://buymeacoffee.com/Views2k">Buy Me a Coffee</a>
 </p>
 
-## Wisp 2.6.14
+## Wisp 2.7
 
-Wisp 2.6.14 keeps clips recording when the graphics card is busy, records game audio on more PCs, stays open when Windows restarts its desktop display, and shows how to finish an update that cannot install itself.
+Wisp 2.7 keeps clips recording when the graphics card is busy, records game audio on more PCs, stays open when Windows restarts its desktop display, and shows how to finish an update that cannot install itself.
 
-[Clips](#clips) · [Tune](#tune) · [Lap review](#lap-review) · [Live map and lap delta](#live-map-and-lap-delta) · [Install](#install) · [2.6.14 release notes](docs/releases/Wisp-2.6.14-release-notes.md)
+[Clips](#clips) · [Tune](#tune) · [Lap review](#lap-review) · [Live map and lap delta](#live-map-and-lap-delta) · [Install](#install) · [2.7 release notes](docs/releases/Wisp-2.7.0-release-notes.md)
 
 ### Clips
 

@@ -15,9 +15,9 @@ public static class ReleaseNotesCatalog
     public static IReadOnlyList<ReleaseNoteEntry> Entries { get; } =
     [
         new(
-            "2.6.14",
-            "October 20, 2026",
-            "CLIPS AND UPDATE FIXES",
+            "2.7",
+            "October 21, 2026",
+            "CLIPS AND RELIABILITY",
             "Clips keep recording and capture game audio on more PCs, Wisp stays open through display restarts, and updates that cannot install themselves point you to the installer.",
             true,
             [

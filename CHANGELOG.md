@@ -2,7 +2,7 @@
 
 Notable changes to Wisp are recorded here.
 
-## 2.6.14 - 2026-10-20
+## 2.7.0 - 2026-10-21
 
 - Keep clip recording going when the graphics card is busy instead of restarting every few seconds; clips stay in step with the game and its audio.
 - Keep a slow drive from holding up clip recording.

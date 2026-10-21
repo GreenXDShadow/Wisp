@@ -1,4 +1,6 @@
-# Wisp 2.6.14
+# Wisp 2.7
+
+Wisp 2.7 keeps clips recording when the graphics card is busy, records game audio on more PCs, stays open when Windows restarts its desktop display, and shows how to finish an update that cannot install itself.
 
 [Download the latest Wisp release for Windows](https://github.com/Views2k/Wisp/releases/latest)
 

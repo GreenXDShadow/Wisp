@@ -222,6 +222,9 @@ namespace
 
     struct MotionHandle { std::shared_ptr<MotionChannel> channel; };
 
+    // Diagnostic A/B only: optional cap on the HUD bitmap presentation rate (0 = monitor rate).
+    std::atomic<uint32_t> experimentPacingCapHertz{ 0 };
+
     class Renderer final
     {
     public:
@@ -656,6 +659,8 @@ namespace
                 return;
             }
             presentationRefreshRate = mode.dmDisplayFrequency;
+            const uint32_t cap = experimentPacingCapHertz.load();
+            if (cap && cap < presentationRefreshRate) presentationRefreshRate = cap;
             if (!pacer.IsValid())
             {
                 DisablePacing(HRESULT_FROM_WIN32(pacer.InitializationError()));
@@ -1389,6 +1394,12 @@ HRESULT __cdecl WispRendererGetGpuPriorityStatus(void* renderer, WispGpuPriority
         *status = r.gpuPriorityStatus;
         return S_OK;
     });
+}
+HRESULT __cdecl WispRendererSetExperimentPacingCap(uint32_t hertz) noexcept
+{
+    if (hertz > 1000) return E_INVALIDARG;
+    experimentPacingCapHertz.store(hertz);
+    return S_OK;
 }
 HRESULT __cdecl WispRendererSetGpuPriority(void* renderer, int raise) noexcept
 {

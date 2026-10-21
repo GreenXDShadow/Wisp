@@ -136,6 +136,8 @@ WISP_API HRESULT __cdecl WispRendererGetGpuPriorityStatus(void* renderer, WispGp
 // Owner thread. raise != 0 requests the HIGH process class and device priority +1;
 // raise == 0 restores NORMAL and 0. WARP renderers return S_FALSE and change nothing.
 WISP_API HRESULT __cdecl WispRendererSetGpuPriority(void* renderer, int raise) noexcept;
+// Diagnostic A/B only: caps every renderer's paced presentation rate; 0 restores the monitor rate.
+WISP_API HRESULT __cdecl WispRendererSetExperimentPacingCap(uint32_t hertz) noexcept;
 WISP_API HRESULT __cdecl WispRendererGetPresentationStatus(void* renderer, WispPresentationStatus* status) noexcept;
 // S_OK replaces the swapchain; S_FALSE preserves an already fresh chain.
 WISP_API HRESULT __cdecl WispRendererPrepareForResume(void* renderer) noexcept;

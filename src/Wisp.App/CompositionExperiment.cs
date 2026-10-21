@@ -18,6 +18,8 @@ internal static class CompositionExperiment
     private static System.Threading.Timer? _timer;
     private static volatile bool _passive = true;
     private static bool _boost;
+    private static int _renderHz;
+    private static bool? _gpuHigh;
     private static string? _last;
 
     internal static bool PassiveUpdatesRequested => _passive;
@@ -35,6 +37,8 @@ internal static class CompositionExperiment
             if (text == _last) return;
             _last = text;
             bool passive = true, boost = false;
+            var renderHz = 0;
+            bool? gpuHigh = null;
             if (text.Length > 0)
             {
                 try
@@ -44,6 +48,10 @@ internal static class CompositionExperiment
                         passive = p.GetBoolean();
                     if (document.RootElement.TryGetProperty("boost", out var b) && b.ValueKind is JsonValueKind.True or JsonValueKind.False)
                         boost = b.GetBoolean();
+                    if (document.RootElement.TryGetProperty("renderHz", out var r) && r.ValueKind == JsonValueKind.Number && r.TryGetInt32(out var hz) && hz is >= 0 and <= 1000)
+                        renderHz = hz;
+                    if (document.RootElement.TryGetProperty("gpuHigh", out var g) && g.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                        gpuHigh = g.GetBoolean();
                 }
                 catch (JsonException) { return; }
             }
@@ -60,11 +68,29 @@ internal static class CompositionExperiment
                 try { boostResult = DCompositionBoostCompositorClock(boost); }
                 catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException) { boostResult = error.HResult; }
             }
+            var renderResult = 0;
+            if (renderHz != _renderHz)
+            {
+                _renderHz = renderHz;
+                try { renderResult = SetExperimentPacingCap((uint)renderHz); }
+                catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException) { renderResult = error.HResult; }
+            }
+            var gpuResult = 0;
+            if (gpuHigh is { } high && high != _gpuHigh)
+            {
+                _gpuHigh = high;
+                try { gpuResult = D3DKMTSetProcessSchedulingPriorityClass(new IntPtr(-1), high ? 4 : 2); }
+                catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException) { gpuResult = error.HResult; }
+            }
             try
             {
                 File.AppendAllText(LogPath, "{\"qpc\":" + Stopwatch.GetTimestamp().ToString(System.Globalization.CultureInfo.InvariantCulture) +
                     ",\"passive\":" + (passive ? "true" : "false") + ",\"boost\":" + (boost ? "true" : "false") +
                     ",\"boostHr\":" + boostResult.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                    ",\"renderHz\":" + renderHz.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                    ",\"renderHr\":" + renderResult.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                    ",\"gpuHigh\":" + (gpuHigh is null ? "null" : gpuHigh.Value ? "true" : "false") +
+                    ",\"gpuStatus\":" + gpuResult.ToString(System.Globalization.CultureInfo.InvariantCulture) +
                     ",\"windows\":\"" + windows + "\"}" + Environment.NewLine);
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
@@ -73,4 +99,10 @@ internal static class CompositionExperiment
 
     [DllImport("dcomp.dll")]
     private static extern int DCompositionBoostCompositorClock([MarshalAs(UnmanagedType.Bool)] bool enable);
+
+    [DllImport("Wisp.NativeRenderer.dll", EntryPoint = "WispRendererSetExperimentPacingCap", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int SetExperimentPacingCap(uint hertz);
+
+    [DllImport("gdi32.dll")]
+    private static extern int D3DKMTSetProcessSchedulingPriorityClass(IntPtr process, int priorityClass);
 }

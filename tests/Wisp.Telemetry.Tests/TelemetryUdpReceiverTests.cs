@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using Xunit;
 
@@ -10,7 +11,7 @@ public sealed class TelemetryUdpReceiverTests
     public async Task UnexpectedSocketClosureRetainsFaultCodeAndRestartClearsIt()
     {
         await using var receiver = new TelemetryUdpReceiver();
-        await receiver.StartAsync(GetAvailablePort(), TestContext.Current.CancellationToken);
+        await StartOnAvailablePortAsync(receiver);
         var session = typeof(TelemetryUdpReceiver).GetField("_session", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(receiver)!;
         var socket = (Socket)session.GetType().GetProperty("Socket")!.GetValue(session)!;
         var receive = (Task)session.GetType().GetProperty("ReceiveTask")!.GetValue(session)!;
@@ -19,7 +20,7 @@ public sealed class TelemetryUdpReceiverTests
         Assert.NotNull(receiver.GetStatistics(DateTimeOffset.UtcNow).ListenerError);
         Assert.NotNull(receiver.ListenerFailure);
         Assert.NotEqual(0, receiver.ListenerFailure.Code);
-        await receiver.RestartAsync(GetAvailablePort(), TestContext.Current.CancellationToken);
+        await RestartOnAvailablePortAsync(receiver);
         Assert.Null(receiver.ListenerFailure);
         Assert.Null(receiver.GetStatistics(DateTimeOffset.UtcNow).ListenerError);
         await receiver.StopAsync();
@@ -44,10 +45,8 @@ public sealed class TelemetryUdpReceiverTests
     [Fact]
     public async Task ReceivesAndParsesLocalhostDatagramEndToEnd()
     {
-        var port = GetAvailablePort();
-
         await using var receiver = new TelemetryUdpReceiver { CapturePublicationTimings = true };
-        await receiver.StartAsync(port, TestContext.Current.CancellationToken);
+        var port = await StartOnAvailablePortAsync(receiver);
         using var sender = new UdpClient(AddressFamily.InterNetwork);
         var packet = Fh6PacketFixture.Create();
         await sender.SendAsync(packet, new IPEndPoint(IPAddress.Loopback, port), TestContext.Current.CancellationToken);
@@ -70,11 +69,10 @@ public sealed class TelemetryUdpReceiverTests
     [Fact]
     public async Task FailedRestartKeepsExistingListenerAndSettingsStateAlive()
     {
-        var originalPort = GetAvailablePort();
         using var reservation = CreateExclusiveReservation();
         var occupiedPort = ((IPEndPoint)reservation.LocalEndPoint!).Port;
         await using var receiver = new TelemetryUdpReceiver();
-        await receiver.StartAsync(originalPort, TestContext.Current.CancellationToken);
+        var originalPort = await StartOnAvailablePortAsync(receiver);
         using var sender = new UdpClient(AddressFamily.InterNetwork);
         await sender.SendAsync(Fh6PacketFixture.Create(), new IPEndPoint(IPAddress.Loopback, originalPort), TestContext.Current.CancellationToken);
         await WaitForCarAsync(receiver, 2468);
@@ -96,28 +94,22 @@ public sealed class TelemetryUdpReceiverTests
     [Fact]
     public async Task SuccessfulRestartClearsSessionStateAndReleasesOldPort()
     {
-        var originalPort = GetAvailablePort();
         await using var receiver = new TelemetryUdpReceiver();
-        await receiver.StartAsync(originalPort, TestContext.Current.CancellationToken);
+        var originalPort = await StartOnAvailablePortAsync(receiver);
         using var sender = new UdpClient(AddressFamily.InterNetwork);
         await sender.SendAsync(Fh6PacketFixture.Create(), new IPEndPoint(IPAddress.Loopback, originalPort), TestContext.Current.CancellationToken);
         await WaitForCarAsync(receiver, 2468);
 
         // Probe after the sender has auto-bound, so its ephemeral source port
         // cannot claim our released replacement port before the restart.
-        var replacementPort = GetAvailablePortExcept(originalPort);
-        await receiver.RestartAsync(replacementPort, TestContext.Current.CancellationToken);
+        var replacementPort = await RestartOnAvailablePortAsync(receiver, originalPort);
 
         Assert.Null(receiver.Latest);
         Assert.Equal(replacementPort, receiver.ListeningPort);
         var statistics = receiver.GetStatistics(DateTimeOffset.UtcNow);
         Assert.Equal(0, statistics.AcceptedPackets);
         Assert.Equal(0, statistics.RejectedPackets);
-        using var oldPortProbe = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
-        {
-            ExclusiveAddressUse = true
-        };
-        oldPortProbe.Bind(new IPEndPoint(IPAddress.Loopback, originalPort));
+        AssertLoopbackPortReleased(originalPort);
 
         var replacementPacket = Fh6PacketFixture.Create();
         Fh6PacketFixture.WriteInt32(replacementPacket, 212, 9753);
@@ -128,9 +120,8 @@ public sealed class TelemetryUdpReceiverTests
     [Fact]
     public async Task ConcurrentStopsAreIdempotentAndClearLatestState()
     {
-        var port = GetAvailablePort();
         await using var receiver = new TelemetryUdpReceiver();
-        await receiver.StartAsync(port, TestContext.Current.CancellationToken);
+        var port = await StartOnAvailablePortAsync(receiver);
         using var sender = new UdpClient(AddressFamily.InterNetwork);
         await sender.SendAsync(Fh6PacketFixture.Create(), new IPEndPoint(IPAddress.Loopback, port), TestContext.Current.CancellationToken);
         await WaitForCarAsync(receiver, 2468);
@@ -162,10 +153,9 @@ public sealed class TelemetryUdpReceiverTests
     [Fact]
     public async Task PacketSubscriberFailureDoesNotTerminateListener()
     {
-        var port = GetAvailablePort();
         await using var receiver = new TelemetryUdpReceiver();
         receiver.PacketAvailable += (_, _) => throw new InvalidOperationException("Test subscriber failure");
-        await receiver.StartAsync(port, TestContext.Current.CancellationToken);
+        var port = await StartOnAvailablePortAsync(receiver);
         using var sender = new UdpClient(AddressFamily.InterNetwork);
 
         await sender.SendAsync(Fh6PacketFixture.Create(), new IPEndPoint(IPAddress.Loopback, port), TestContext.Current.CancellationToken);
@@ -183,9 +173,8 @@ public sealed class TelemetryUdpReceiverTests
     [Fact]
     public async Task PacketBurstRetainsNewestDatagram()
     {
-        var port = GetAvailablePort();
         await using var receiver = new TelemetryUdpReceiver();
-        await receiver.StartAsync(port, TestContext.Current.CancellationToken);
+        var port = await StartOnAvailablePortAsync(receiver);
         using var sender = new UdpClient(AddressFamily.InterNetwork);
 
         for (var index = 0; index < 16; index++)
@@ -206,9 +195,8 @@ public sealed class TelemetryUdpReceiverTests
     [Fact]
     public async Task MalformedTrafficIsCountedWithoutPretendingValidTelemetryIsFresh()
     {
-        var port = GetAvailablePort();
         await using var receiver = new TelemetryUdpReceiver();
-        await receiver.StartAsync(port, TestContext.Current.CancellationToken);
+        var port = await StartOnAvailablePortAsync(receiver);
         using var sender = new UdpClient(AddressFamily.InterNetwork);
         await sender.SendAsync(new byte[8], new IPEndPoint(IPAddress.Loopback, port),
             TestContext.Current.CancellationToken);
@@ -229,9 +217,8 @@ public sealed class TelemetryUdpReceiverTests
     [InlineData(4096)]
     public async Task OversizedDatagramIsRejectedWithoutStoppingTheListener(int size)
     {
-        var port = GetAvailablePort();
         await using var receiver = new TelemetryUdpReceiver();
-        await receiver.StartAsync(port, TestContext.Current.CancellationToken);
+        var port = await StartOnAvailablePortAsync(receiver);
         using var sender = new UdpClient(AddressFamily.InterNetwork);
         var endpoint = new IPEndPoint(IPAddress.Loopback, port);
         await sender.SendAsync(new byte[size], endpoint, TestContext.Current.CancellationToken);
@@ -245,9 +232,8 @@ public sealed class TelemetryUdpReceiverTests
     [Fact]
     public async Task OversizedDatagramInABurstLeavesTheNewestValidPacket()
     {
-        var port = GetAvailablePort();
         await using var receiver = new TelemetryUdpReceiver();
-        await receiver.StartAsync(port, TestContext.Current.CancellationToken);
+        var port = await StartOnAvailablePortAsync(receiver);
         using var sender = new UdpClient(AddressFamily.InterNetwork);
         var endpoint = new IPEndPoint(IPAddress.Loopback, port);
         // One burst fits the socket buffer; the listener may drain the later datagrams.
@@ -274,20 +260,55 @@ public sealed class TelemetryUdpReceiverTests
     [Fact]
     public async Task DisposeReleasesPortAndPreventsRestart()
     {
-        var port = GetAvailablePort();
         var receiver = new TelemetryUdpReceiver();
-        await receiver.StartAsync(port, TestContext.Current.CancellationToken);
+        var port = await StartOnAvailablePortAsync(receiver);
 
         await receiver.DisposeAsync();
 
         Assert.False(receiver.IsRunning);
         Assert.Null(receiver.ListeningPort);
-        using var portProbe = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
-        {
-            ExclusiveAddressUse = true
-        };
-        portProbe.Bind(new IPEndPoint(IPAddress.Loopback, port));
+        AssertLoopbackPortReleased(port);
         await Assert.ThrowsAsync<ObjectDisposedException>(() => receiver.RestartAsync(GetAvailablePortExcept(port), TestContext.Current.CancellationToken));
+    }
+
+    private static Task<int> StartOnAvailablePortAsync(TelemetryUdpReceiver receiver) =>
+        BindAvailablePortAsync(port => receiver.StartAsync(port, TestContext.Current.CancellationToken));
+
+    private static Task<int> RestartOnAvailablePortAsync(TelemetryUdpReceiver receiver, int excludedPort = 0) =>
+        BindAvailablePortAsync(port => receiver.RestartAsync(port, TestContext.Current.CancellationToken), excludedPort);
+
+    private static async Task<int> BindAvailablePortAsync(Func<int, Task> bind, int excludedPort)
+    {
+        // Probing releases the port before the receiver binds it. Another test's
+        // ephemeral sender can claim it in between; retry only that setup race.
+        for (var attempt = 0; ; attempt++)
+        {
+            var port = GetAvailablePortExcept(excludedPort);
+            try
+            {
+                await bind(port);
+                return port;
+            }
+            catch (SocketException error) when (error.SocketErrorCode == SocketError.AddressAlreadyInUse && attempt < 7)
+            {
+            }
+        }
+    }
+
+    private static void AssertLoopbackPortReleased(int port)
+    {
+        try
+        {
+            using var probe = CreateExclusiveSocket();
+            probe.Bind(new IPEndPoint(IPAddress.Loopback, port));
+        }
+        catch (SocketException error) when (error.SocketErrorCode == SocketError.AddressAlreadyInUse)
+        {
+            // Once released, another test's ephemeral sender can take the port on the
+            // wildcard address. Only a loopback binding means the receiver still holds it.
+            var loopback = new IPEndPoint(IPAddress.Loopback, port);
+            Assert.DoesNotContain(loopback, IPGlobalProperties.GetIPGlobalProperties().GetActiveUdpListeners());
+        }
     }
 
     private static int GetAvailablePort()
@@ -310,13 +331,16 @@ public sealed class TelemetryUdpReceiverTests
 
     private static Socket CreateExclusiveReservation()
     {
-        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
-        {
-            ExclusiveAddressUse = true
-        };
+        var socket = CreateExclusiveSocket();
         socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         return socket;
     }
+
+    private static Socket CreateExclusiveSocket() =>
+        new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)
+        {
+            ExclusiveAddressUse = true
+        };
 
     private static async Task WaitForCarAsync(TelemetryUdpReceiver receiver, int carOrdinal)
     {

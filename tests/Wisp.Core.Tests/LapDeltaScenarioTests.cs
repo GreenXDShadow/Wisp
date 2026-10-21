@@ -124,8 +124,12 @@ public sealed class LapDeltaScenarioTests
     }
 
     // A lapped race: the game reports lap number, lap time, last lap and race time.
-    private sealed class RaceSession(int seed, LapDeltaReference mode) : Session(seed, mode)
+    private sealed class RaceSession : Session
     {
+        private readonly bool _fromGrid;
+
+        internal RaceSession(int seed, LapDeltaReference mode) : base(seed, mode) => _fromGrid = seed % 2 == 0;
+
         private readonly record struct Moment(double Game, double Race, double Lap, double Fraction);
         private readonly List<Moment> _history = [];
         private Moment _now;
@@ -138,7 +142,10 @@ public sealed class LapDeltaScenarioTests
         internal void Run()
         {
             NextPace();
-            Send();
+            // Even seeds leave the grid behind the line. The first crossing keeps packet lap 0.
+            // Odd seeds, and every restart, still begin on the line.
+            if (_fromGrid) ApproachFromGrid();
+            else Send();
             for (var step = 0; step < 70; step++)
             {
                 var roll = Random.NextDouble();
@@ -160,12 +167,27 @@ public sealed class LapDeltaScenarioTests
             for (var i = 0; i < Frames(seconds); i++) Step();
         }
 
+        // About 90 m behind the line, both clocks at zero. Driving to the line happens before any other event.
+        private void ApproachFromGrid()
+        {
+            var back = 90 / (Math.Tau * 150);
+            _now = new(0, 0, 0, -back);
+            Send();
+            while (_now.Fraction < 0) Step();
+        }
+
         private void Step(bool send = true)
         {
             var frame = Frame();
             Wall += frame;
             var next = _now with { Game = _now.Game + frame, Race = _now.Race + frame, Lap = _now.Lap + frame, Fraction = _now.Fraction + frame / Pace };
-            if (next.Fraction >= 1)
+            if (_now.Fraction < 0 && next.Fraction >= 0)
+            {
+                // The first line from the grid snaps the lap clock and leaves the packet lap at 0.
+                next = next with { Lap = next.Fraction * Pace };
+                _history.Clear();
+            }
+            else if (next.Fraction >= 1)
             {
                 var past = (next.Fraction - 1) * Pace;
                 var duration = next.Lap - past;

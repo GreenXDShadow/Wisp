@@ -286,9 +286,13 @@ public sealed class LapDeltaTracker
             // In a race the game rewinds its race clock and lap clock together. Straight after a rewind
             // it can briefly report a lap clock that disagrees with its race clock; wait for one that
             // agrees. (Wisp's Time Attack clocks restart an attempt while the race clock runs on.)
+            // The first circuit line is not that wait: the lap clock snaps while the race clock continues.
+            // A restart is not that wait either. After a grid start the race clock is ahead of the lap
+            // clock, so both returning to zero would look like a disagreement and the new lap would be missed.
+            var sameLapLine = !continuous && SameLapLine(timing, last, lap, direction, elapsed, state.GroundSpeedMetersPerSecond);
             if (!continuous && timing == LapTimingMode.GameLaps && lap.LapNumber == last.LapNumber && last.RaceSeconds > 0 &&
                 Math.Abs(lap.CurrentLapSeconds - last.CurrentLapSeconds - (lap.RaceSeconds - last.RaceSeconds)) > .005f &&
-                ++_held <= HeldSamples) return _lastReading;
+                !sameLapLine && !RaceStart(lap) && ++_held <= HeldSamples) return _lastReading;
             if (!continuous)
             {
                 // A rewind returns the car to a moment of this recording, with the lap clock at that
@@ -299,7 +303,7 @@ public sealed class LapDeltaTracker
                 // zero with its clocks, and a new lap arrives by crossing the line. In Time Attack a lap
                 // clock back at zero is a new attempt.
                 if ((lap.CurrentLapSeconds > .25f || timing == LapTimingMode.GameLaps && !RaceStart(lap)) && RewindsTo(last, lap)) Rewind(lap);
-                else if (lap.CurrentLapSeconds <= .25f && (RaceStart(lap) || AtLapStart(lap))) StartLap(lap);
+                else if (lap.CurrentLapSeconds <= .25f && (RaceStart(lap) || AtLapStart(lap) || sameLapLine)) StartLap(lap);
                 // Straight after a rewind the game can briefly report a lap clock that fits neither.
                 // Wait a moment for a consistent sample before giving up on this lap's recording.
                 else if (lap.CurrentLapSeconds + .01f < last.CurrentLapSeconds && ++_held <= HeldSamples) return _lastReading;
@@ -512,6 +516,15 @@ public sealed class LapDeltaTracker
     // A race (re)start: the race clock and the first lap's clock both begin at zero.
     private static bool RaceStart(LapTelemetry lap) =>
         lap.LapNumber == 0 && lap.RaceSeconds <= .5f && Math.Abs(lap.RaceSeconds - lap.CurrentLapSeconds) <= .1f;
+
+    // On a circuit the first timed lap does not increment the packet lap. The lap clock snaps
+    // back to the line, the race clock continues, and the car is still driving forward.
+    private bool SameLapLine(LapTimingMode timing, LapTelemetry last, LapTelemetry lap, Vector3 move, float seconds, float speed) =>
+        timing == LapTimingMode.GameLaps && lap.LapNumber == last.LapNumber &&
+        last.LastLapSeconds <= .01f && lap.LastLapSeconds <= .01f &&
+        last.CurrentLapSeconds > .25f && lap.CurrentLapSeconds <= .25f &&
+        lap.RaceSeconds + .01f >= last.RaceSeconds && lap.RaceSeconds - last.RaceSeconds <= 1f &&
+        Drove(move, seconds, speed) && !RewindsTo(last, lap);
 
     // The car is at the line where laps start (the references' first samples, or this recording's
     // when it began there), no further from it than its lap clock allows.

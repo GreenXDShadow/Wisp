@@ -49,8 +49,16 @@ public sealed class LapDeltaTests
         }
         Assert.Equal(50, LapMapBounds.From(new(Array.Empty<LapPosition>(), false)).Size);
     }
+    private const double CircuitLength = 150 * Math.Tau;
+
     private static Vector3 Circle(double progress) => new((float)(150 * Math.Cos(progress * Math.Tau)), 0,
         (float)(150 * Math.Sin(progress * Math.Tau)));
+
+    // Meters ahead of the line, along the same circle. Negative is still on the way to it.
+    private static Vector3 OnCircuit(double metersFromLine) => Circle(metersFromLine / CircuitLength);
+
+    private static VehicleState Moving(double race, double lap, int number, Vector3 position, double last, float speed) =>
+        State(race, lap, number, position, last) with { GroundSpeedMetersPerSecond = speed };
 
     internal static VehicleState State(double race, double lap, int number, Vector3 position, double last = 60) => new()
     {
@@ -109,6 +117,57 @@ public sealed class LapDeltaTests
         Assert.Equal(LapDeltaStatus.RecordingLap, first.Status);
         Assert.Null(first.Seconds);
         Assert.Equal(LapDeltaStatus.Comparing, Drive(tracker, 120, 60, 2, 5).Status);
+    }
+
+    [Theory]
+    [InlineData(5.884, 5.900, true)]
+    [InlineData(5.650, 5.667, false)]
+    public void SameLapLineSnapStartsTheLearningLap(double beforeRace, double snapRace, bool completeLap)
+    {
+        var tracker = new LapDeltaTracker();
+        const float speed = 29;
+        const double behind = 92;
+        const double lapLength = 37.036;
+        var gridStart = OnCircuit(-behind);
+        for (var i = 0; i <= (int)Math.Floor(beforeRace * 10); i++)
+        {
+            var t = i / 10d;
+            var along = -behind * (1 - t / beforeRace);
+            tracker.Update(Moving(t, t, 0, OnCircuit(along), 0, speed), LapDeltaReference.SessionBest);
+        }
+        tracker.Update(Moving(beforeRace, beforeRace, 0, OnCircuit(0), 0, speed), LapDeltaReference.SessionBest);
+        var grid = tracker.ReadMap(1)!;
+        Assert.False(grid.Outline.Complete);
+        Assert.True(grid.Outline.Points.Count > 2);
+        Assert.Contains(grid.Outline.Points, point => Vector3.Distance(point.ToVector(), gridStart) < 5);
+
+        // The logged line: packet lap stays 0, last-lap time stays 0, the lap clock snaps to
+        // about 0.017 s, and the race clock keeps running. The car is still at about 29 m/s.
+        const double snapLap = .017;
+        LapDeltaReading reading = tracker.Update(Moving(snapRace, snapLap, 0, OnCircuit(0), 0, speed), LapDeltaReference.SessionBest);
+        Assert.InRange(Vector3.Distance(gridStart, OnCircuit(0)), 90, 92);
+        for (var lap = snapLap + .016; lap < .517; lap += .016)
+            reading = tracker.Update(Moving(snapRace + (lap - snapLap), lap, 0, OnCircuit((lap / lapLength) * CircuitLength), 0, speed), LapDeltaReference.SessionBest);
+        reading = tracker.Update(Moving(snapRace + (.517 - snapLap), .517, 0, OnCircuit((.517 / lapLength) * CircuitLength), 0, speed), LapDeltaReference.SessionBest);
+        Assert.Equal(LapDeltaStatus.RecordingLap, reading.Status);
+        var learning = tracker.ReadMap(2)!;
+        Assert.True(learning.IsRecording);
+        Assert.False(learning.Outline.Complete);
+        Assert.NotSame(grid.Outline, learning.Outline);
+        Assert.Contains(learning.Outline.Points, point => Vector3.Distance(point.ToVector(), OnCircuit(0)) < 15);
+        Assert.DoesNotContain(learning.Outline.Points, point => Vector3.Distance(point.ToVector(), gridStart) < 50);
+        if (!completeLap) return;
+
+        for (var lap = .6; lap <= 37.020; lap += .1)
+            tracker.Update(Moving(snapRace + (lap - snapLap), lap, 0, OnCircuit((lap / lapLength) * CircuitLength), 0, speed), LapDeltaReference.SessionBest);
+        var snap = OnCircuit(0);
+        var finish = OnCircuit(0);
+        var opened = tracker.Update(Moving(42.920, 0, 1, finish, lapLength, speed), LapDeltaReference.SessionBest);
+        Assert.Equal(LapDeltaStatus.Comparing, opened.Status);
+        Assert.Equal(lapLength, opened.ReferenceSeconds!.Value, 3);
+        Assert.InRange(opened.Seconds!.Value, -.05, .05);
+        // The second line in the log was about 5 m from the first snap. On this circle it is the same point.
+        Assert.InRange(Vector3.Distance(snap, finish), 0, 5);
     }
 
     [Fact]

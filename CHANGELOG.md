@@ -9,6 +9,7 @@ Notable changes to Wisp are recorded here.
 - Report which check the update helper failed when an update cannot start, and show how to reinstall when this copy of Wisp does not match the registered installation. Automatic update attempts stop for the session after such a rejection; Install update remains available from the dashboard.
 - Record game audio on PCs where Windows reports a meaningless buffer size for the game audio stream. Clip recording previously failed to start there with an audio capture error.
 - Keep Wisp running when Windows restarts its desktop display, for example after a graphics driver reset; the HUD restores its transparent overlay on its own.
+- On a circuit, learn the track from the start line when the first timed lap begins, including from the back of the grid. Before, the run up to the line could freeze the map for that lap, and the delta waited until the lap after next.
 
 ## 2.6.13 - 2026-10-17
 
